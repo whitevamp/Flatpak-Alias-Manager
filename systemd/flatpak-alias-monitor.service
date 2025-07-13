@@ -1,0 +1,25 @@
+[Unit]
+Description=Flatpak Alias Monitor Service
+# Ensure this service starts after D-Bus and network are up
+After=network.target dbus.service
+
+[Service]
+Type=simple
+# The script to execute. It must be executable by root.
+# Make sure the path is correct for your user.
+ExecStart=/home/username/.local/bin/flatpak-alias-monitor.sh
+Restart=on-failure
+# This service must run as root to monitor the system D-Bus
+User=root
+# Pass the actual user's name to the script via an environment variable
+Environment="TARGET_USER=username"
+
+# Redirect stdout and stderr to the user's log file.
+# The log directory (~/.local/state/add-fp-alias/) must be writable by root.
+# It should be, as it's within your home directory, which root has access to.
+StandardOutput=append:/home/username/.local/state/add-fp-alias/monitor.log
+StandardError=append:/home/username/.local/state/add-fp-alias/monitor.log
+
+[Install]
+# This service should be started when the system is ready for multi-user logins
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+# This file is a template for ~/.config/add-fp-alias/skipped-aliases
+#
+# Place Flatpak App IDs (e.g., org.gnome.Calendar, com.valvesoftware.Steam)
+# in this file, one per line, to prevent the 'add-fp-alias.sh' script
+# from creating aliases for them when using the '--add-all' option.
+#
+# Lines starting with '#' are treated as comments and will be ignored.
+# Empty lines are also ignored.
+#
+# Example:
+# org.gnome.Calculator
+# com.discordapp.Discord
+# org.mozilla.firefox # You might prefer to launch Firefox directly or use a system package
