@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # add-fp-alias.sh - Flatpak Alias Management Script
-# Version: 1.3.6
+# Version: 1.3.9 # <-- UPDATED VERSION NUMBER
 # Manages aliases for Flatpak applications, integrating with your shell.
 
 # --- Configuration ---
@@ -21,6 +21,12 @@ APP_ID=""
 FORCE_ACTION=false
 ASSUME_YES=false # Controls --yes flag for auto-confirmation
 VERBOSE=false    # Controls --verbose flag for detailed output
+
+# New flags for renaming and interactive single add
+RENAME_ALIAS=false
+OLD_ALIAS_NAME=""
+NEW_ALIAS_NAME=""
+INTERACTIVE_ADD_SINGLE_ALIAS=false
 
 # --- Function Definitions ---
 
@@ -52,11 +58,21 @@ usage() {
     echo "                                      to add, skip, or rename its alias."
     echo "                                      Example: $0 --interactive-add-all"
     echo ""
+    echo "  --interactive-add <app_id>          Interactively add or modify an alias for a single"
+    echo "                                      specific Flatpak application by its App ID."
+    echo "                                      You will be prompted to confirm, skip, or rename."
+    echo "                                      Example: $0 --interactive-add com.axosoft.GitKraken"
+    echo ""
     echo "  --add-alias <app_id> [alias_name]   Add or update an alias for a specific Flatpak"
     echo "                                      application by its App ID. If 'alias_name' is"
     echo "                                      omitted, a default alias is generated from the App ID."
     echo "                                      Example (default alias): $0 --add-alias org.gnome.TextEditor"
     echo "                                      Example (custom alias): $0 --add-alias org.gnome.TextEditor textedit"
+    echo ""
+    echo "  --rename-alias <old_alias> <new_alias> Rename an existing alias to a new name."
+    echo "                                      The old alias must exist and the new alias must not"
+    echo "                                      conflict with an existing alias for a different app."
+    echo "                                      Example: $0 --rename-alias oldname newname"
     echo ""
     echo "  --remove-alias <app_id_or_alias>    Remove an alias for a specific Flatpak application"
     echo "                                      using either its App ID or the alias name itself."
@@ -548,6 +564,195 @@ operation_add_single_alias() {
     fi
 }
 
+# operation_rename_alias - Renames an existing alias
+operation_rename_alias() {
+    echo "Renaming alias '$OLD_ALIAS_NAME' to '$NEW_ALIAS_NAME'..."
+
+    local old_alias_target_app_id # SC2155 fix: Declare separately
+    old_alias_target_app_id=$(get_alias_target_app_id "$OLD_ALIAS_NAME")
+
+    if [ -z "$old_alias_target_app_id" ]; then
+        echo "Error: Old alias '$OLD_ALIAS_NAME' not found."
+        return 1
+    fi
+
+    local new_alias_target_app_id # SC2155 fix: Declare separately
+    new_alias_target_app_id=$(get_alias_target_app_id "$NEW_ALIAS_NAME")
+
+    if [ -n "$new_alias_target_app_id" ] && [ "$new_alias_target_app_id" != "$old_alias_target_app_id" ]; then
+        echo "Error: New alias name '$NEW_ALIAS_NAME' is already in use by another Flatpak App ID: '$new_alias_target_app_id'."
+        echo "Please choose a different new alias name or remove the conflicting alias first."
+        return 1
+    fi
+
+    if ! confirm_action "Are you sure you want to rename alias '$OLD_ALIAS_NAME' to '$NEW_ALIAS_NAME' (for App ID: '$old_alias_target_app_id')?"; then
+        echo "Alias rename cancelled."
+        return 0
+    fi
+
+    # Remove the old alias entry
+    local old_alias_app_id_pattern_escaped # SC2155 fix: Declare separately
+    old_alias_app_id_pattern_escaped=$(echo "$old_alias_target_app_id" | sed 's/\./\\./g')
+    sed -i -E "/^alias ${OLD_ALIAS_NAME}=\"flatpak run ${old_alias_app_id_pattern_escaped}\"$/d" "$FLATPAK_ALIASES_FILE" 2>/dev/null
+    verbose_echo "Removed old alias entry for '$OLD_ALIAS_NAME'."
+
+    # Add the new alias entry
+    if add_update_alias "$old_alias_target_app_id" "$NEW_ALIAS_NAME"; then
+        echo "-> Successfully renamed alias from '$OLD_ALIAS_NAME' to '$NEW_ALIAS_NAME'."
+        echo "Remember to source your shell configuration to apply changes."
+    else
+        echo "Error: Failed to create new alias '$NEW_ALIAS_NAME'. The old alias '$OLD_ALIAS_NAME' has been removed."
+        return 1
+    fi
+}
+
+# operation_interactive_add_single_alias - Interactively adds/modifies a single alias
+operation_interactive_add_single_alias() {
+    echo "Interactively adding/modifying alias for Flatpak App ID: '$APP_ID'..."
+
+    if ! flatpak info "$APP_ID" >/dev/null 2>&1; then
+        echo "Error: Flatpak App ID '$APP_ID' not found. Cannot add alias."
+        return 1
+    fi
+
+    declare -A existing_aliases # alias_name -> full_command_string
+    if [ -f "$FLATPAK_ALIASES_FILE" ]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^alias[[:space:]]*([^=]+)=\"([^\"]+)\" ]]; then
+                local alias_name_key="${BASH_REMATCH[1]}"
+                local alias_command="${BASH_REMATCH[2]}"
+                existing_aliases["$alias_name_key"]="$alias_command"
+                verbose_echo "Loaded existing alias: '$alias_name_key' -> '$alias_command'"
+            fi
+        done < "$FLATPAK_ALIASES_FILE"
+    fi
+
+    local app_name # SC2155 fix: Declare separately
+    app_name=$(get_app_name "$APP_ID")
+    local suggested_alias # SC2155 fix: Declare separately
+    suggested_alias=$(generate_default_alias_name "$APP_ID")
+    local full_command="flatpak run $APP_ID"
+    
+    local current_alias_name="$suggested_alias"
+    local action_taken=false
+
+    echo ""
+    echo "--- Processing: '$app_name' (App ID: '$APP_ID') ---"
+    verbose_echo "DEBUG: App ID: '$APP_ID', App Name: '$app_name'"
+    verbose_echo "DEBUG: Suggested alias: '$suggested_alias', Full Command: '$full_command'"
+
+    # Check if an alias for this specific Flatpak already exists
+    local existing_alias_for_this_app=""
+    for alias_name_key in "${!existing_aliases[@]}"; do
+        if [[ "${existing_aliases[$alias_name_key]}" == "$full_command" ]]; then
+            existing_alias_for_this_app="$alias_name_key"
+            verbose_echo "DEBUG: Found existing alias '$alias_name_key' for this app."
+            break
+        fi
+    done
+
+    if [ -n "$existing_alias_for_this_app" ]; then
+        echo "  Note: Alias '$existing_alias_for_this_app' already exists for this Flatpak."
+        read -r -p "  Keep existing alias or re-process? [K]eep existing / [P]rocess (potential overwrite/rename): " keep_or_process </dev/tty
+        if [[ "$keep_or_process" =~ ^[Kk]$ ]]; then
+            echo "  -> Keeping existing alias '$existing_alias_for_this_app'."
+            verbose_echo "User chose to keep existing alias."
+            action_taken=true
+        fi
+    fi
+
+    # Check if the suggested alias name is already used by a *different* command
+    if ! "$action_taken" && [[ -n "${existing_aliases[$suggested_alias]}" && "${existing_aliases[$suggested_alias]}" != "$full_command" ]]; then
+        echo "  Conflict detected for suggested alias '$suggested_alias'!"
+        echo "    Currently points to: '${existing_aliases[$suggested_alias]}'"
+        echo "    New app '$app_name' wants to use it for: '$full_command'"
+        read -r -p "  [O]verwrite '$suggested_alias' / [R]ename '$app_name' / [S]kip '$app_name': " conflict_choice </dev/tty
+        verbose_echo "Conflict detected: alias '$suggested_alias' points to different command."
+        
+        case "$conflict_choice" in
+            [Oo])
+                current_alias_name="$suggested_alias" # Use the suggested name, it will overwrite
+                verbose_echo "User chose to overwrite alias '$suggested_alias'."
+                ;;
+            [Rr])
+                local new_name_chosen=false
+                while ! "$new_name_chosen"; do
+                    read -rp "    Enter new alias name for '$app_name' (Current: '$suggested_alias'): " temp_new_alias </dev/tty
+                    if [ -z "$temp_new_alias" ]; then
+                        echo "    Alias name cannot be empty. Please try again."
+                        verbose_echo "User entered empty alias name during rename. Prompting again."
+                    elif [[ -n "${existing_aliases[$temp_new_alias]}" && "${existing_aliases[$temp_new_alias]}" != "$full_command" ]]; then
+                        echo "    Error: Alias '$temp_new_alias' is already used by a different command. Please choose another name."
+                        verbose_echo "User entered conflicting alias name during rename. Prompting again."
+                    else
+                        current_alias_name="$temp_new_alias"
+                        new_name_chosen=true
+                        verbose_echo "User chose new alias name: '$current_alias_name'."
+                    fi
+                done
+                ;;
+            [Ss])
+                echo "  -> Skipping alias for '$app_name' due to conflict."
+                action_taken=true
+                verbose_echo "User chose to skip due to conflict."
+                ;;
+            *)
+                echo "  Invalid choice. Please enter O, R, or S."
+                verbose_echo "Invalid conflict resolution choice."
+                ;;
+        esac
+    fi
+
+    # If no conflict or conflict resolved by renaming, prompt for general action
+    if ! "$action_taken"; then
+        local user_action_choice=""
+        while true; do
+            read -rp "  Add alias '$current_alias_name' for '$app_name' ('$APP_ID')? [Y]es/[N]o/[E]dit name: " user_action_choice </dev/tty
+            case "$user_action_choice" in
+                [Yy])
+                    add_update_alias "$APP_ID" "$current_alias_name"
+                    echo "-> Alias for '$app_name' ($APP_ID) added/updated as '$current_alias_name'."
+                    verbose_echo "User confirmed adding alias '$current_alias_name'."
+                    action_taken=true
+                    break
+                    ;;
+                [Nn])
+                    echo "  -> Skipping alias for '$app_name'."
+                    verbose_echo "User chose to skip alias '$app_name'."
+                    action_taken=true
+                    break
+                    ;;
+                [Ee])
+                    local new_name_chosen=false
+                    while ! "$new_name_chosen"; do
+                        read -rp "    Enter new alias name for '$app_name' (Current: '$current_alias_name'): " temp_new_alias </dev/tty
+                        if [ -z "$temp_new_alias" ]; then
+                            echo "    Alias name cannot be empty. Please try again."
+                            verbose_echo "User entered empty alias name during edit. Prompting again."
+                        elif [[ -n "${existing_aliases[$temp_new_alias]}" && "${existing_aliases[$temp_new_alias]}" != "$full_command" ]]; then
+                            echo "    Error: Alias '$temp_new_alias' is already used by a different command. Please choose another name."
+                            verbose_echo "User entered conflicting alias name during edit. Prompting again."
+                        else
+                            current_alias_name="$temp_new_alias"
+                            new_name_chosen=true
+                            verbose_echo "User chose new alias name: '$current_alias_name'."
+                        fi
+                    done
+                    ;;
+                *)
+                    echo "  Invalid choice. Please enter Y, N, or E."
+                    verbose_echo "Invalid choice during general action prompt."
+                    ;;
+            esac
+        done
+    fi
+
+    if [ "$action_taken" = true ]; then
+        echo "Remember to source your shell configuration (e.g., 'source $FLATPAK_ALIASES_FILE' or 'source ~/.bashrc') to make the new aliases active."
+    fi
+}
+
+
 # operation_remove_single_alias - Removes a single alias
 operation_remove_single_alias() {
     remove_alias_entry "$ALIAS_NAME"
@@ -691,32 +896,6 @@ list_all_flatpak_aliases() {
 
 # save_alias_list - Saves the current list of aliases to a backup file
 save_alias_list() {
-    # SC2168 fix: Removed 'local' as this is in the main script's while loop, not a function
-    # The variable is declared and assigned within the case statement.
-    # It should be 'target_file' and not 'save_target_file' as per the argument parsing.
-    # Re-evaluating the original context, `save_alias_list` is a function.
-    # The `local save_target_file=""` was inside the argument parsing block, not the function.
-    # The function `save_alias_list` receives `target_file` as $1.
-    # So, the original line `local target_file="${1:-$HOME/flatpak_aliases_backup_$(date +%Y%m%d%H%M%S).sh}"` is correct within the function.
-    # The SC2168 warning applied to the argument parsing section, not this function.
-    # I will revert the change for this function and ensure the main script's argument parsing is correct.
-
-    # Re-re-evaluating: The user's provided script *does* have `local save_target_file=""` at line 753,
-    # which is *inside* the `case "--save-alias-list"` block, but *outside* the `save_alias_list()` function itself.
-    # This is indeed where SC2168 comes from.
-    # The fix is to remove `local` from that line in the main script's argument parsing.
-    # This specific function `save_alias_list` correctly uses `local target_file="${1:-...}"`.
-    # So, no change needed here in this function. The fix will be in the main script's argument parsing section.
-
-    # (Self-correction: The current immersive is `add-fp-alias.sh` itself, not `_functions.sh`.
-    # So, the `save_alias_list` function is defined within this script, and the `local target_file` line
-    # is within this function, which is correct. The SC2168 warning was for the *call* site in the main loop,
-    # which is also in this file. I need to fix the call site, not the function definition.)
-
-    # Okay, the `save_alias_list` function itself is fine with `local target_file`.
-    # The SC2168 warning was for the `local save_target_file=""` inside the `case` statement in the main logic.
-    # I will fix that in the main logic block below.
-
     # This function's internal local declaration is correct.
     local target_file="${1:-$HOME/flatpak_aliases_backup_$(date +%Y%m%d%H%M%S).sh}" # Default backup file
     $VERBOSE && verbose_echo "Attempting to save current aliases to '$target_file'."
@@ -734,7 +913,7 @@ save_alias_list() {
 # --- Main Script Logic ---
 
 # Set script version
-VERSION="1.3.5"
+VERSION="1.3.9" # Updated version number
 
 # Argument parsing
 # Loop through arguments and parse them
@@ -745,6 +924,15 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --interactive-add-all)
             INTERACTIVE_ADD_ALL_ALIASES=true
+            ;;
+        --interactive-add)
+            INTERACTIVE_ADD_SINGLE_ALIAS=true
+            APP_ID="$2"
+            if [ -z "$APP_ID" ]; then
+                echo "Error: --interactive-add requires an App ID."
+                usage
+            fi
+            shift # Consume App ID
             ;;
         --add-alias)
             ADD_SINGLE_ALIAS=true
@@ -759,6 +947,16 @@ while [[ "$#" -gt 0 ]]; do
                 shift # Consume alias_name
             fi
             shift # Consume App ID
+            ;;
+        --rename-alias)
+            RENAME_ALIAS=true
+            OLD_ALIAS_NAME="$2"
+            NEW_ALIAS_NAME="$3"
+            if [ -z "$OLD_ALIAS_NAME" ] || [ -z "$NEW_ALIAS_NAME" ]; then
+                echo "Error: --rename-alias requires an old alias name and a new alias name."
+                usage
+            fi
+            shift 2 # Consume old_alias_name and new_alias_name
             ;;
         --remove-alias)
             REMOVE_SINGLE_ALIAS=true
@@ -802,8 +1000,8 @@ while [[ "$#" -gt 0 ]]; do
             exit 0 # Exit after operation
             ;;
         --save-alias-list)
-            # SC2168 fix: Removed 'local' as this variable is in the main script's scope (not a function)
-            # It's intended to be a global variable (or script-level variable).
+            # SC2168 fix: Removed 'local' as this variable is in the main script's scope (not a function).
+            # It's intended to be a script-level variable.
             save_target_file=""
             # Check if next argument is not another flag and not empty, then it's the target file
             if [[ "$2" != --* ]] && [[ -n "$2" ]]; then
@@ -843,7 +1041,14 @@ load_skipped_aliases # Load skipped aliases at the start
 
 # Execute operations based on flags
 # If no specific operation flags are set, print usage
-if ! "$ADD_ALL_ALIASES" && ! "$INTERACTIVE_ADD_ALL_ALIASES" && ! "$ADD_SINGLE_ALIAS" && ! "$REMOVE_SINGLE_ALIAS" && ! "$CHECK_STALE_ALIASES" && ! "$PURGE_ALL_ALIASES"; then
+if ! "$ADD_ALL_ALIASES" && \
+   ! "$INTERACTIVE_ADD_ALL_ALIASES" && \
+   ! "$INTERACTIVE_ADD_SINGLE_ALIAS" && \
+   ! "$ADD_SINGLE_ALIAS" && \
+   ! "$RENAME_ALIAS" && \
+   ! "$REMOVE_SINGLE_ALIAS" && \
+   ! "$CHECK_STALE_ALIASES" && \
+   ! "$PURGE_ALL_ALIASES"; then
     usage # Default to showing usage if no action is specified
 fi
 
@@ -855,8 +1060,16 @@ if "$INTERACTIVE_ADD_ALL_ALIASES"; then
     operation_interactive_add_all_flatpaks
 fi
 
+if "$INTERACTIVE_ADD_SINGLE_ALIAS"; then
+    operation_interactive_add_single_alias
+fi
+
 if "$ADD_SINGLE_ALIAS"; then
     operation_add_single_alias
+fi
+
+if "$RENAME_ALIAS"; then
+    operation_rename_alias
 fi
 
 if "$REMOVE_SINGLE_ALIAS"; then
