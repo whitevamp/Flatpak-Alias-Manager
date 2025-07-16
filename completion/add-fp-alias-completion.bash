@@ -1,92 +1,101 @@
 # ~/.bash_completion/add-fp-alias-completion.bash
 # Bash completion for the add-fp-alias.sh script
+# add-fp-alias-completion.bash
+#
+# Bash completion script for the add-fp-alias.sh utility.
+# This script provides tab completion for commands, options, and Flatpak App IDs.
+#
+# To install:
+# 1. Copy this file to ~/.bash_completion/ (or a similar directory sourced by your shell).
+#    e.g., cp add-fp-alias-completion.bash ~/.bash_completion/
+# 2. Ensure your ~/.bashrc (or equivalent) sources this file:
+#    if [ -f ~/.bash_completion/add-fp-alias-completion.bash ]; then
+#      . ~/.bash_completion/add-fp-alias-completion.bash
+#    fi
+# 3. Source your ~/.bashrc or open a new terminal session.
 
-_add_fp_alias_completion()
-{
-    local cur prev
-    COMPREPLY=() # Initialize the array that will hold the completion candidates
-    cur="${COMP_WORDS[COMP_CWORD]}" # The current word being completed
-    prev="${COMP_WORDS[COMP_CWORD-1]}" # The word immediately preceding the current word
+_add_fp_alias_completion() {
+    local cur prev # Removed cmd_index
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    # --- DEBUGGING OUTPUT STARTS HERE ---
-    # echo "DEBUG: Called _add_fp_alias_completion" > /dev/tty
-    # echo "DEBUG: COMP_WORDS: (${COMP_WORDS[*]})" > /dev/tty
-    # echo "DEBUG: COMP_CWORD: ${COMP_CWORD}" > /dev/tty
-    # echo "DEBUG: cur: '${cur}'" > /dev/tty
-    # echo "DEBUG: prev: '${prev}'" > /dev/tty
-    # --- DEBUGGING OUTPUT ENDS HERE ---
+    # Determine the current command being completed
+    # This loop finds the last non-option argument, which is likely the command
+    # The 'command' variable was unused, so this loop is no longer strictly necessary for its original purpose
+    # but could be kept if future logic requires identifying the main command.
+    # For now, it's removed as per SC2034.
+    # for (( i=${#COMP_WORDS[@]}-2; i>=0; i-- )); do
+    #     if [[ "${COMP_WORDS[i]}" != -* ]]; then
+    #         cmd_index=$i
+    #         break
+    #     fi
+    # done
+    # local command="${COMP_WORDS[cmd_index]}" # Removed this line
 
-    # IMPORTANT: This path MUST match the 'alias_file' variable in your main add-fp-alias.sh script.
-    local alias_file="$HOME/.bashrc.d/flatpak-aliases"
+    # Define all possible script options
+    local script_options="--add-all --interactive-add-all --add-alias --remove-alias --check-stale-aliases --purge-all --skip-alias --unskip-alias --list-skipped --list-all --save-alias-list --force --yes --verbose --version -h --help"
 
-    # Define all the primary options your script supports
-    local script_options="--list-all --save-alias-list --add-all --interactive-add-all --remove-alias --check-stale-aliases --purge-all-aliases"
+    # Options that do not take arguments
+    local options_with_no_arguments="--add-all --interactive-add-all --check-stale-aliases --purge-all --list-skipped --list-all --force --yes --verbose --version -h --help"
 
-    # Define which options expect an existing alias name as their argument
-    local commands_for_existing_aliases="--remove-alias"
+    # Flatpak App IDs (cached for performance)
+    # This assumes `flatpak list` is available and returns app IDs.
+    local flatpak_app_ids_cache_file="${HOME}/.local/state/add-fp-alias/flatpak_app_ids_cache"
+    local flatpak_app_ids=""
 
-    # Define options that DO NOT take any further arguments.
-    local options_with_no_arguments="--list-all --save-alias-list --add-all --interactive-add-all --check-stale-aliases --purge-all-aliases"
+    # Cache Flatpak App IDs for faster completion
+    if [ -f "$flatpak_app_ids_cache_file" ] && [ $(( $(date +%s) - $(stat -c %Y "$flatpak_app_ids_cache_file") )) -lt 3600 ]; then
+        # Cache is less than 1 hour old
+        flatpak_app_ids=$(<"$flatpak_app_ids_cache_file")
+    else
+        # Cache is old or doesn't exist, regenerate
+        local flatpak_list_output # Declare separately for SC2155
+        flatpak_list_output=$(flatpak list --app-ids --columns=application | grep -E '^([a-z0-9]+\.)+[a-z0-9]+$' | sort -u)
+        flatpak_app_ids="${flatpak_list_output}"
+        mkdir -p "$(dirname "$flatpak_app_ids_cache_file")"
+        echo "$flatpak_app_ids" > "$flatpak_app_ids_cache_file"
+    fi
 
-    # ================================================================
-    # Case 1: Completing an argument to a specific option (e.g., after --remove-alias)
-    # ================================================================
-    if [[ " ${commands_for_existing_aliases} " =~ " ${prev} " ]]; then
-        # echo "DEBUG: Entered --remove-alias completion block (prev='${prev}')." > /dev/tty
-        if [[ -f "$alias_file" ]]; then
-            # echo "DEBUG: Alias file '$alias_file' exists." > /dev/tty
-            # --- DEBUGGING OUTPUT FOR ALIAS EXTRACTION ---
-            # echo "DEBUG: Contents of alias_file: $(cat "$alias_file")" > /dev/tty # DANGEROUS FOR LARGE FILES
-            # Consider replacing the above line with:
-            # echo "DEBUG: Head of alias_file: $(head "$alias_file")" > /dev/tty
+    # Logic for specific commands
+    case "${prev}" in
+        --add-alias|--skip-alias|--unskip-alias)
+            # Complete with Flatpak App IDs
+            # SC2207 fix: Use mapfile to populate COMPREPLY array
+            mapfile -t COMPREPLY < <(compgen -W "${flatpak_app_ids}" -- "${cur}")
+            return 0
+            ;;
+        --remove-alias)
+            # Complete with Flatpak App IDs OR existing alias names
+            local existing_aliases # SC2155 fix: Declare separately
+            existing_aliases=$(grep '^alias ' "$HOME/.bashrc.d/flatpak-aliases" 2>/dev/null | sed -E 's/^alias[[:space:]]*([^=]+)[[:space:]]*=.*/\1/')
+            local aliases_and_ids="${flatpak_app_ids} ${existing_aliases}"
+            # SC2207 fix: Use mapfile to populate COMPREPLY array
+            mapfile -t COMPREPLY < <(compgen -W "${aliases_and_ids}" -- "${cur}")
+            return 0
+            ;;
+        --save-alias-list)
+            # Complete with file paths
+            # SC2207 fix: Use mapfile to populate COMPREPLY array
+            mapfile -t COMPREPLY < <(compgen -f "${cur}")
+            return 0
+            ;;
+    esac
 
-            local existing_aliases=$(grep '^alias ' "$alias_file" | sed -E 's/^alias[[:space:]]*([^=]+)[[:space:]]*=.*/\1/')
-            # echo "DEBUG: Extracted aliases: '${existing_aliases}'" > /dev/tty
-            # --- DEBUGGING OUTPUT ENDS HERE ---
-
-            COMPREPLY=( $(compgen -W "${existing_aliases}" -- "${cur}") )
-            # echo "DEBUG: COMPREPLY after compgen: (${COMPREPLY[*]})" > /dev/tty
-        # else
-            # echo "DEBUG: Alias file '$alias_file' does NOT exist!" > /dev/tty
-        fi
+    # If the previous argument was an option that takes no arguments, then no further completion
+    # SC2076 fix: Remove quotes from right-hand side of =~
+    if [[ " ${options_with_no_arguments} " =~ ${prev} ]]; then
         return 0
     fi
 
-    # ================================================================
-    # Case 1.5: Completing after an option that takes NO arguments
-    # ================================================================
-    if [[ " ${options_with_no_arguments} " =~ " ${prev} " ]]; then
-        # echo "DEBUG: Entered no-argument option block (prev='${prev}')." > /dev/tty
-        COMPREPLY=() # Set completion list to empty
-        return 0     # Indicate that completion has been handled
-    fi
+    # Default completion: suggest script options
+    # SC2207 fix: Use mapfile to populate COMPREPLY array
+    mapfile -t COMPREPLY < <(compgen -W "${script_options}" -- "${cur}")
 
-    # ================================================================
-    # Case 2: Completing the script's options themselves (e.g., after "add-fp-alias --")
-    # ================================================================
-    if [[ "${cur}" == --* ]]; then
-        # echo "DEBUG: Entered script options completion block (cur='${cur}')." > /dev/tty
-        COMPREPLY=( $(compgen -W "${script_options}" -- "${cur}") )
-        return 0
-    fi
-
-    # ================================================================
-    # Case 3: Completing the first argument (Flatpak app name/ID) when no option is specified
-    # ================================================================
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        # echo "DEBUG: Entered Flatpak app ID completion block (cur='${cur}')." > /dev/tty
-        local flatpak_app_id_parts=$(flatpak list --app --columns=application | awk -F'.' '{print $NF}' | sort -u)
-        COMPREPLY=( $(compgen -W "${flatpak_app_id_parts}" -- "${cur}") )
-        return 0
-    fi
-
-    # ================================================================
-    # Default Fallback: If no specific completion logic matches, suggest filenames
-    # ================================================================
-    # echo "DEBUG: Entered default fallback (filename) completion block (cur='${cur}')." > /dev/tty
-    COMPREPLY=( $(compgen -f "${cur}") )
+    return 0
 }
 
-# Register the completion function with Bash for your script.
+# Register the completion function for `add-fp-alias.sh`
 complete -F _add_fp_alias_completion add-fp-alias.sh
-complete -F _add_fp_alias_completion add-fp-alias
+# Also register for `add-fp-alias-m.sh` for your testing purposes
+complete -F _add_fp_alias_completion add-fp-alias-m.sh
