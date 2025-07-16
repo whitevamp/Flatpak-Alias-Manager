@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # add-fp-alias.sh - Flatpak Alias Management Script
-# Version: 1.3.10 # <-- UPDATED VERSION NUMBER
+# Version: 1.3.11 # <-- UPDATED VERSION NUMBER
 # Manages aliases for Flatpak applications, integrating with your shell.
 
 # --- Configuration ---
@@ -375,6 +375,23 @@ remove_alias_entry() {
     return 0
 }
 
+# operation_check_systemd_service - Checks for the existence of the systemd service file
+operation_check_systemd_service() {
+    verbose_echo "Checking for systemd service file: ${SYSTEMD_SERVICE_FILE}"
+    if [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+        echo "Systemd service file found: ${SYSTEMD_SERVICE_FILE} (OK)"
+        return 0
+    else
+        echo "WARNING: Systemd service file NOT found: ${SYSTEMD_SERVICE_FILE}" >&2
+        echo "This file is crucial for automatic alias updates on Flatpak install/uninstall." >&2
+        echo "On immutable OSes (like Fedora Silverblue/Bazzite), this file might be overwritten" >&2
+        echo "during system updates. You may need to re-copy it to /etc/systemd/system/." >&2
+        echo "Please refer to the installation instructions for 'flatpak-alias-monitor.service'." >&2
+        return 1
+    fi
+}
+
+
 # --- Main Operations ---
 
 # operation_add_all_aliases - Adds/updates aliases for all installed Flatpaks (non-interactive)
@@ -527,7 +544,7 @@ operation_interactive_add_all_flatpaks() {
                                 read -rp "    Enter new alias name for '$app_name' (Current: '$current_alias_name'): " temp_new_alias </dev/tty
                                 if [ -z "$temp_new_alias" ]; then
                                     echo "    Alias name cannot be empty. Please try again."
-                                    verbose_echo "User entered empty alias name during rename. Prompting again."
+                                    verbose_echo "User entered empty alias name during edit. Prompting again."
                                 elif [[ -n "${existing_aliases[$temp_new_alias]}" && "${existing_aliases[$temp_new_alias]}" != "$full_command" ]]; then
                                     echo "    Error: Alias '$temp_new_alias' is already used by a different command. Please choose another name."
                                     verbose_echo "User entered conflicting alias name during rename. Prompting again."
@@ -923,7 +940,7 @@ save_alias_list() {
 # --- Main Script Logic ---
 
 # Set script version
-VERSION="1.3.10" # Updated version number
+VERSION="1.3.11" # Updated version number
 
 # Argument parsing
 # Loop through arguments and parse them
