@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # add-fp-alias.sh - Flatpak Alias Management Script
-# Version: 1.3.9 # <-- UPDATED VERSION NUMBER
+# Version: 1.3.10 # <-- UPDATED VERSION NUMBER
 # Manages aliases for Flatpak applications, integrating with your shell.
 
 # --- Configuration ---
@@ -27,6 +27,10 @@ RENAME_ALIAS=false
 OLD_ALIAS_NAME=""
 NEW_ALIAS_NAME=""
 INTERACTIVE_ADD_SINGLE_ALIAS=false
+
+# New flag and path for systemd service check
+CHECK_SYSTEMD_SERVICE=false
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/flatpak-alias-monitor.service"
 
 # --- Function Definitions ---
 
@@ -109,6 +113,11 @@ usage() {
     echo "                                      If 'file_path' is omitted, it defaults to a timestamped"
     echo "                                      file in your home directory (e.g., ~/flatpak_aliases_backup_YYYYMMDDHHMMSS.sh)."
     echo "                                      Example: $0 --save-alias-list ~/my_flatpak_aliases_backup.sh"
+    echo ""
+    echo "  --check-systemd-service             Check if the Flatpak alias systemd service file"
+    echo "                                      exists in ${SYSTEMD_SERVICE_FILE}. Useful for"
+    echo "                                      immutable OS users to detect if it was overwritten."
+    echo "                                      Example: $0 --check-systemd-service"
     echo ""
     echo "  --force                             Force an operation (e.g., overwrite existing custom"
     echo "                                      aliases with default ones if they conflict). Currently"
@@ -518,14 +527,15 @@ operation_interactive_add_all_flatpaks() {
                                 read -rp "    Enter new alias name for '$app_name' (Current: '$current_alias_name'): " temp_new_alias </dev/tty
                                 if [ -z "$temp_new_alias" ]; then
                                     echo "    Alias name cannot be empty. Please try again."
-                                    verbose_echo "User entered empty alias name during edit. Prompting again."
+                                    verbose_echo "User entered empty alias name during rename. Prompting again."
                                 elif [[ -n "${existing_aliases[$temp_new_alias]}" && "${existing_aliases[$temp_new_alias]}" != "$full_command" ]]; then
                                     echo "    Error: Alias '$temp_new_alias' is already used by a different command. Please choose another name."
-                                    verbose_echo "User entered conflicting alias name during edit. Prompting again."
+                                    verbose_echo "User entered conflicting alias name during rename. Prompting again."
                                 else
                                     current_alias_name="$temp_new_alias"
                                     new_name_chosen=true
                                     verbose_echo "User chose new alias name: '$current_alias_name'."
+                                # No `continue` here, as it's inside the `while ! "$new_name_chosen"` loop
                                 fi
                             done
                             ;;
@@ -913,7 +923,7 @@ save_alias_list() {
 # --- Main Script Logic ---
 
 # Set script version
-VERSION="1.3.9" # Updated version number
+VERSION="1.3.10" # Updated version number
 
 # Argument parsing
 # Loop through arguments and parse them
@@ -1011,6 +1021,10 @@ while [[ "$#" -gt 0 ]]; do
             save_alias_list "$save_target_file"
             exit 0 # Exit after operation
             ;;
+        --check-systemd-service)
+            CHECK_SYSTEMD_SERVICE=true
+            # This flag will be handled after initial setup, and will exit the script.
+            ;;
         --force)
             FORCE_ACTION=true
             ;;
@@ -1039,6 +1053,11 @@ done
 ensure_aliases_dir_exists
 load_skipped_aliases # Load skipped aliases at the start
 
+# Perform routine systemd service file check (warns but doesn't exit)
+echo "Performing routine systemd service file check..."
+operation_check_systemd_service || true # '|| true' ensures script doesn't exit if check fails
+echo "Routine systemd service file check complete."
+
 # Execute operations based on flags
 # If no specific operation flags are set, print usage
 if ! "$ADD_ALL_ALIASES" && \
@@ -1048,7 +1067,8 @@ if ! "$ADD_ALL_ALIASES" && \
    ! "$RENAME_ALIAS" && \
    ! "$REMOVE_SINGLE_ALIAS" && \
    ! "$CHECK_STALE_ALIASES" && \
-   ! "$PURGE_ALL_ALIASES"; then
+   ! "$PURGE_ALL_ALIASES" && \
+   ! "$CHECK_SYSTEMD_SERVICE"; then # Added CHECK_SYSTEMD_SERVICE to this condition
     usage # Default to showing usage if no action is specified
 fi
 
@@ -1082,6 +1102,12 @@ fi
 
 if "$PURGE_ALL_ALIASES"; then
     operation_purge_all_aliases
+fi
+
+# Handle --check-systemd-service as a standalone operation that exits
+if "$CHECK_SYSTEMD_SERVICE"; then
+    operation_check_systemd_service
+    exit 0 # Exit after this specific check
 fi
 
 # Note: The `source ~/.bashrc` command should be run manually after script execution
