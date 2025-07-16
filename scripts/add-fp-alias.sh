@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # add-fp-alias.sh - Flatpak Alias Management Script
-# Version: 1.3.5 # <-- UPDATED VERSION NUMBER
+# Version: 1.3.6
 # Manages aliases for Flatpak applications, integrating with your shell.
 
 # --- Configuration ---
@@ -134,7 +134,8 @@ ensure_aliases_dir_exists() {
 # verbose_echo - Logs a message if verbose mode is enabled
 verbose_echo() {
     if "$VERBOSE"; then
-        echo "VERBOSE: $@" >&2 # Redirect to stderr for debug output
+        # SC2145 fix: Quoted "$*" to prevent warning and ensure proper argument handling.
+        echo "VERBOSE: $*" >&2 # Redirect to stderr for debug output
     fi
 }
 
@@ -184,13 +185,16 @@ confirm_action() {
 # get_app_name - Extracts a user-friendly name from Flatpak app output
 get_app_name() {
     local app_id="$1"
-    flatpak info --show-metadata "$app_id" 2>/dev/null | grep -iE '^(name|app-name)=' | head -n 1 | cut -d'=' -f2- | tr -d '\n\r'
+    local name # SC2155 fix: Declare separately
+    name=$(flatpak info --show-metadata "$app_id" 2>/dev/null | grep -iE '^(name|app-name)=' | head -n 1 | cut -d'=' -f2- | tr -d '\n\r')
+    echo "$name"
 }
 
 # generate_default_alias_name - Generates a default alias from app ID
 generate_default_alias_name() {
     local app_id="$1"
-    local name=$(get_app_name "$app_id")
+    local name # SC2155 fix: Declare separately
+    name=$(get_app_name "$app_id")
     local alias_candidate=""
 
     # Prioritize the human-readable name if it exists and is not just the app_id itself
@@ -219,34 +223,43 @@ generate_default_alias_name() {
 
 # get_current_alias_info - Retrieves existing alias for an App ID if any
 get_current_alias_info() {
-    local app_id_pattern=$(echo "$1" | sed 's/\./\\./g') # Escape dots for grep
+    local app_id_pattern # SC2155 fix: Declare separately
+    app_id_pattern=$(echo "$1" | sed 's/\./\\./g') # Escape dots for grep
+    local info # SC2155 fix: Declare separately
     # Find line with alias for this app_id, extract alias name and command
-    grep -E "^alias ([^=]+)=\"flatpak run $app_id_pattern\"" "$FLATPAK_ALIASES_FILE" | head -n 1 | \
-    sed -E 's/^alias ([^=]+)="flatpak run ([^"]+)"$/\1 \2/'
+    info=$(grep -E "^alias ([^=]+)=\"flatpak run $app_id_pattern\"" "$FLATPAK_ALIASES_FILE" | head -n 1 | \
+    sed -E 's/^alias ([^=]+)="flatpak run ([^"]+)"$/\1 \2/')
+    echo "$info"
 }
 
 # get_alias_target_app_id - Retrieves app ID from an alias name
 get_alias_target_app_id() {
     local alias_name="$1"
+    local app_id # SC2155 fix: Declare separately
     # Find line with alias, extract app_id
-    grep -E "^alias ${alias_name}=\"flatpak run ([^\"/]+)\"" "$FLATPAK_ALIASES_FILE" | head -n 1 | \
-    sed -E 's/^alias [^=]+="flatpak run ([^"]+)"$/\1/'
+    app_id=$(grep -E "^alias ${alias_name}=\"flatpak run ([^\"/]+)\"" "$FLATPAK_ALIASES_FILE" | head -n 1 | \
+    sed -E 's/^alias [^=]+="flatpak run ([^"]+)"$/\1/')
+    echo "$app_id"
 }
 
 # add_update_alias - Adds or updates an alias in the file
 add_update_alias() {
     local app_id="$1"
     local desired_alias_name="${2:-}" # Default to empty if not provided
-    local app_name=$(get_app_name "$app_id")
-    local default_alias_name=$(generate_default_alias_name "$app_id")
+    local app_name # SC2155 fix: Declare separately
+    app_name=$(get_app_name "$app_id")
+    local default_alias_name # SC2155 fix: Declare separately
+    default_alias_name=$(generate_default_alias_name "$app_id")
     local alias_to_write=""
-    local current_alias_info=$(get_current_alias_info "$app_id") # "alias_name app_id" if exists
+    local current_alias_info # SC2155 fix: Declare separately
+    current_alias_info=$(get_current_alias_info "$app_id") # "alias_name app_id" if exists
 
     # Determine the alias name to use
     if [ -n "$desired_alias_name" ]; then
         # User specified an alias
         if [ -n "$current_alias_info" ]; then
-            local existing_alias_name=$(echo "$current_alias_info" | awk '{print $1}')
+            local existing_alias_name # SC2155 fix: Declare separately
+            existing_alias_name=$(echo "$current_alias_info" | awk '{print $1}')
             if [ "$existing_alias_name" != "$desired_alias_name" ] && [ ! "$FORCE_ACTION" = true ]; then
                 verbose_echo "Alias '$existing_alias_name' already exists for '$app_id'. Desired alias '$desired_alias_name' is different."
                 if ! confirm_action "Overwrite alias '$existing_alias_name' with '$desired_alias_name' for '$app_name'?"; then
@@ -280,7 +293,8 @@ add_update_alias() {
         return 0
     fi
 
-    local app_id_pattern_escaped=$(echo "$app_id" | sed 's/\./\\./g')
+    local app_id_pattern_escaped # SC2155 fix: Declare separately
+    app_id_pattern_escaped=$(echo "$app_id" | sed 's/\./\\./g')
 
     # Remove any existing alias for this app_id (if it points to this specific app_id)
     sed -i -E "/^alias ([^=]+)=\"flatpak run ${app_id_pattern_escaped}\"$/d" "$FLATPAK_ALIASES_FILE" 2>/dev/null
@@ -308,11 +322,13 @@ remove_alias_entry() {
         $VERBOSE && verbose_echo "Identified '$target' as an alias for App ID '$found_app_id'."
     else
         # Try to find by App ID
-        local current_alias_info=$(get_current_alias_info "$target")
+        local current_alias_info # SC2155 fix: Declare separately
+        current_alias_info=$(get_current_alias_info "$target")
         if [ -n "$current_alias_info" ]; then
             found_alias_name=$(echo "$current_alias_info" | awk '{print $1}')
             found_app_id="$target"
-            $VERBOSE && verbose_echo "Identified '$target' as an App ID with alias '$found_alias_id'."
+            # SC2154 fix: Corrected variable name from found_alias_id to found_app_id
+            $VERBOSE && verbose_echo "Identified '$target' as an App ID with alias '$found_alias_name'."
         fi
     fi
 
@@ -327,7 +343,8 @@ remove_alias_entry() {
     fi
 
     # Remove the alias line
-    local found_app_id_pattern_escaped=$(echo "$found_app_id" | sed 's/\./\\./g')
+    local found_app_id_pattern_escaped # SC2155 fix: Declare separately
+    found_app_id_pattern_escaped=$(echo "$found_app_id" | sed 's/\./\\./g')
     sed -i -E "/^alias ${found_alias_name}=\"flatpak run ${found_app_id_pattern_escaped}\"$/d" "$FLATPAK_ALIASES_FILE"
     echo "-> Removed alias '$found_alias_name' for '$found_app_id'."
     return 0
@@ -339,14 +356,16 @@ remove_alias_entry() {
 operation_add_all_aliases() {
     echo "Adding aliases for all installed Flatpak applications (non-interactive)..."
     local total_added=0
-    local installed_flatpaks=$(flatpak list --app-ids --columns=application | grep -E '^([a-z0-9]+\.)+[a-z0-9]+$')
+    local installed_flatpaks # SC2155 fix: Declare separately
+    installed_flatpaks=$(flatpak list --app-ids --columns=application | grep -E '^([a-z0-9]+\.)+[a-z0-9]+$')
 
     for app_id in $installed_flatpaks; do
         if is_skipped "$app_id"; then
             $VERBOSE && verbose_echo "Skipping '$app_id' as it's in the skip list."
             continue
         fi
-        local app_name=$(get_app_name "$app_id")
+        local app_name # SC2155 fix: Declare separately
+        app_name=$(get_app_name "$app_id")
         $VERBOSE && verbose_echo "Processing: App ID: '$app_id', App Name: '$app_name'."
 
         if add_update_alias "$app_id"; then
@@ -374,14 +393,16 @@ operation_interactive_add_all_flatpaks() {
 
     local new_aliases_added=0
 
-    local loop_output=$(flatpak list --app --columns=application,name | while IFS=$'\t' read -r app_id app_name; do
+    local loop_output # SC2155 fix: Declare separately
+    loop_output=$(flatpak list --app --columns=application,name | while IFS=$'\t' read -r app_id app_name; do
         if [ -n "$app_id" ]; then
             if is_skipped "$app_id"; then
                 $VERBOSE && verbose_echo "Skipping '$app_id' as it's in the skip list."
                 continue
             fi
 
-            local suggested_alias=$(generate_default_alias_name "$app_id")
+            local suggested_alias # SC2155 fix: Declare separately
+            suggested_alias=$(generate_default_alias_name "$app_id")
             local full_command="flatpak run $app_id"
 
             local current_alias_name="$suggested_alias"
@@ -502,7 +523,8 @@ operation_interactive_add_all_flatpaks() {
         fi # End if app_id is not empty
     done) # End of the while loop and redirection to 'loop_output'
 
-    local new_aliases_added=$(echo "$loop_output" | grep -c '+')
+    local new_aliases_added # SC2155 fix: Declare separately
+    new_aliases_added=$(echo "$loop_output" | grep -c '+')
 
     echo ""
     echo "Interactive Flatpak alias process complete. Total aliases added/overwritten: $new_aliases_added."
@@ -556,7 +578,8 @@ operation_check_stale_aliases() {
             echo "-> Found stale alias: '$alias_name' for uninstalled Flatpak App ID: '$app_id'."
             stale_aliases_found=$((stale_aliases_found + 1))
             if confirm_action "Remove stale alias '$alias_name'?"; then
-                local app_id_pattern_escaped=$(echo "$app_id" | sed 's/\./\\./g')
+                local app_id_pattern_escaped # SC2155 fix: Declare separately
+                app_id_pattern_escaped=$(echo "$app_id" | sed 's/\./\\./g')
                 sed -i -E "/^alias ${alias_name}=\"flatpak run ${app_id_pattern_escaped}\"$/d" "$FLATPAK_ALIASES_FILE"
                 echo "--> Removed stale alias '$alias_name'."
             else
@@ -585,7 +608,8 @@ operation_purge_all_aliases() {
     fi
 
     if confirm_action "Are you sure you want to remove ALL Flatpak aliases? This cannot be undone."; then
-        local temp_file=$(mktemp)
+        local temp_file # SC2155 fix: Declare separately
+        temp_file=$(mktemp)
         local aliases_removed=0
 
         # Copy non-Flatpak aliases and comments to temp file
@@ -627,7 +651,8 @@ operation_skip_alias() {
 # operation_unskip_alias - Removes an App ID from the skip list
 operation_unskip_alias() {
     if is_skipped "$APP_ID"; then
-        unset SKIPPED_FLATPAKS["$APP_ID"]
+        # SC2184 fix: Quoted argument to unset
+        unset "SKIPPED_FLATPAKS[$APP_ID]"
         save_skipped_aliases
         echo "-> Removed '$APP_ID' from the skip list."
     else
@@ -666,6 +691,33 @@ list_all_flatpak_aliases() {
 
 # save_alias_list - Saves the current list of aliases to a backup file
 save_alias_list() {
+    # SC2168 fix: Removed 'local' as this is in the main script's while loop, not a function
+    # The variable is declared and assigned within the case statement.
+    # It should be 'target_file' and not 'save_target_file' as per the argument parsing.
+    # Re-evaluating the original context, `save_alias_list` is a function.
+    # The `local save_target_file=""` was inside the argument parsing block, not the function.
+    # The function `save_alias_list` receives `target_file` as $1.
+    # So, the original line `local target_file="${1:-$HOME/flatpak_aliases_backup_$(date +%Y%m%d%H%M%S).sh}"` is correct within the function.
+    # The SC2168 warning applied to the argument parsing section, not this function.
+    # I will revert the change for this function and ensure the main script's argument parsing is correct.
+
+    # Re-re-evaluating: The user's provided script *does* have `local save_target_file=""` at line 753,
+    # which is *inside* the `case "--save-alias-list"` block, but *outside* the `save_alias_list()` function itself.
+    # This is indeed where SC2168 comes from.
+    # The fix is to remove `local` from that line in the main script's argument parsing.
+    # This specific function `save_alias_list` correctly uses `local target_file="${1:-...}"`.
+    # So, no change needed here in this function. The fix will be in the main script's argument parsing section.
+
+    # (Self-correction: The current immersive is `add-fp-alias.sh` itself, not `_functions.sh`.
+    # So, the `save_alias_list` function is defined within this script, and the `local target_file` line
+    # is within this function, which is correct. The SC2168 warning was for the *call* site in the main loop,
+    # which is also in this file. I need to fix the call site, not the function definition.)
+
+    # Okay, the `save_alias_list` function itself is fine with `local target_file`.
+    # The SC2168 warning was for the `local save_target_file=""` inside the `case` statement in the main logic.
+    # I will fix that in the main logic block below.
+
+    # This function's internal local declaration is correct.
     local target_file="${1:-$HOME/flatpak_aliases_backup_$(date +%Y%m%d%H%M%S).sh}" # Default backup file
     $VERBOSE && verbose_echo "Attempting to save current aliases to '$target_file'."
 
@@ -750,7 +802,9 @@ while [[ "$#" -gt 0 ]]; do
             exit 0 # Exit after operation
             ;;
         --save-alias-list)
-            local save_target_file=""
+            # SC2168 fix: Removed 'local' as this variable is in the main script's scope (not a function)
+            # It's intended to be a global variable (or script-level variable).
+            save_target_file=""
             # Check if next argument is not another flag and not empty, then it's the target file
             if [[ "$2" != --* ]] && [[ -n "$2" ]]; then
                 save_target_file="$2"
