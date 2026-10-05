@@ -26,7 +26,7 @@ Important Note: This guide uses your_username as a placeholder. You must replace
     Clone the Repository:
     Start by cloning this repository to your local machine:
 
-    git clone https://github.com/your-username/flatpak-alias-manager.git
+    git clone https://github.com/whitevamp/flatpak-alias-manager.git
     cd flatpak-alias-manager
 
     (Remember to replace your-username with your GitHub username if you fork it.)
